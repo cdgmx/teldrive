@@ -1,0 +1,57 @@
+# Build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Development files
+.git/
+.gitignore
+.aider*
+*.env
+*.env.*
+logs/
+*.log
+
+# Database files
+*.db
+sessions/
+
+# UI build artifacts (will be downloaded during build)
+ui/dist/
+docs/dist/
+teldrive-ui.zip
+
+# Documentation and configs
+README.md
+LICENSE
+CONTRIBUTING.md
+.github/
+*.md
+
+# Go workspace
+go.work
+vendor/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Certificates
+certs/
+sslcerts/
+
+# Keep goreleaser.dockerfile for reference but don't include in build context
+goreleaser.dockerfile
+.goreleaser.yml

@@ -1,0 +1,94 @@
+version: '3.9'
+
+# Docker Compose for TelDrive Production Deployment
+# This builds TelDrive from source with custom UI - the primary production method
+
+configs:
+  teldrive_config:
+    content: |
+      [db]
+      data-source = "postgres://teldriveadmin:${POSTGRES_PASSWORD:-password}@db:5432/teldrive"
+
+services:
+  db:
+    image: 'groonga/pgroonga:latest-alpine-16'
+    container_name: teldrive_db
+    restart: always
+    environment:
+      POSTGRES_DB: teldrive
+      POSTGRES_USER: teldriveadmin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    volumes:
+      - 'pgdata:/var/lib/postgresql/data'
+    healthcheck:
+      test:
+        - CMD
+        - pg_isready
+        - '-d'
+        - teldrive
+        - '-U'
+        - teldriveadmin
+      interval: 10s
+      start_period: 30s
+    networks:
+      - teldrive_network
+
+  teldrive:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Production build with custom UI from source
+        - UI_SOURCE_TYPE=build
+        - UI_REPO_URL=https://github.com/cdgmx/teldrive-ui.git
+        - UI_REPO_BRANCH=main
+        - BUILD_MODE=production
+        # Optional: Use GitHub token for private repos or rate limiting
+        # - GITHUB_TOKEN=${GITHUB_TOKEN}
+    container_name: teldrive_app
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    configs:
+      - source: teldrive_config
+        target: /config.toml
+    environment:
+      # Sensitive configuration via environment variables
+      - TELDRIVE_JWT_SECRET=${TELDRIVE_JWT_SECRET:-CHANGE-THIS-JWT-SECRET-IN-PRODUCTION-MIN-32-CHARS}
+      - TELDRIVE_JWT_ALLOWED_USERS=${TELDRIVE_JWT_ALLOWED_USERS:-YourTelegramUsername}
+      - TELDRIVE_TG_UPLOADS_ENCRYPTION_KEY=${TELDRIVE_TG_UPLOADS_ENCRYPTION_KEY:-CHANGE-THIS-32-CHAR-ENCRYPTION-KEY}
+      - TELDRIVE_CACHE_REDIS_PASS=${TELDRIVE_CACHE_REDIS_PASS:-}
+    volumes:
+      # Storage for Telegram session data
+      - './storage.db:/storage.db:rw'
+      # Optional: mount local config instead of using configs
+      # - './config.toml:/config.toml:ro'
+    expose:
+      - 8080
+    ports:
+      - "8080:8080"
+    networks:
+      - teldrive_network
+
+  imgproxy:
+    image: darthsim/imgproxy
+    container_name: teldrive_imgproxy
+    restart: always
+    environment:
+      IMGPROXY_ALLOW_ORIGIN: "https://teldrive.goresolvr.xyz"
+      IMGPROXY_ENFORCE_WEBP: 'true'
+      IMGPROXY_MALLOC: jemalloc
+    expose:
+      - 8080
+    ports:
+      - "8989:8080"
+    networks:
+      - teldrive_network
+
+volumes:
+  pgdata:
+
+networks:
+  teldrive_network:
+    driver: bridge

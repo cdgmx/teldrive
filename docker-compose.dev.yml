@@ -1,0 +1,101 @@
+version: '3.9'
+
+# Docker Compose for TelDrive Development Environment
+# Optimized for development workflow with live reload and debugging
+
+services:
+  db:
+    image: 'groonga/pgroonga:latest-alpine-16'
+    container_name: teldrive_dev_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: teldrive_dev
+      POSTGRES_USER: teldriveadmin
+      POSTGRES_PASSWORD: password
+    volumes:
+      - 'pgdata_dev:/var/lib/postgresql/data'
+    ports:
+      - "5432:5432"  # Expose for external access
+    healthcheck:
+      test:
+        - CMD
+        - pg_isready
+        - '-d'
+        - teldrive_dev
+        - '-U'
+        - teldriveadmin
+      interval: 10s
+      start_period: 30s
+    networks:
+      - teldrive_dev_network
+
+  teldrive:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder  # Use builder stage for development with debugging
+      args:
+        # For development, build UI from your repo for latest changes
+        - UI_SOURCE_TYPE=build
+        - UI_REPO_URL=https://github.com/cdgmx/teldrive-ui.git
+        - UI_REPO_BRANCH=main
+        - BUILD_MODE=development
+        # Optional: Use skip for faster rebuilds if UI hasn't changed
+        # - UI_SOURCE_TYPE=skip
+    container_name: teldrive_dev_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Mount source code for live development
+      - '.:/app:rw'
+      - './storage.dev.db:/storage.db:rw'
+      - './config.dev.toml:/config.toml:ro'
+      # Go module cache for faster rebuilds
+      - 'go_mod_cache:/go/pkg/mod'
+      - 'go_build_cache:/root/.cache/go-build'
+    ports:
+      - "8080:8080"
+      - "2345:2345"  # Delve debugger port
+    networks:
+      - teldrive_dev_network
+    environment:
+      - CGO_ENABLED=0
+      - GOOS=linux
+      - GO111MODULE=on
+    # Override entrypoint for development
+    entrypoint: ["go", "run", "main.go", "run", "--tg-storage-file", "/storage.db"]
+    # Enable debugging
+    command: ["--config", "/config.toml"]
+
+  # Optional: Redis for development caching
+  redis:
+    image: redis:7-alpine
+    container_name: teldrive_dev_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - teldrive_dev_network
+
+  # Optional: Adminer for database management
+  adminer:
+    image: adminer
+    container_name: teldrive_dev_adminer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    networks:
+      - teldrive_dev_network
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+
+volumes:
+  pgdata_dev:
+  go_mod_cache:
+  go_build_cache:
+
+networks:
+  teldrive_dev_network:
+    driver: bridge

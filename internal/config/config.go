@@ -139,6 +139,11 @@ func (cl *ConfigLoader) Load(cmd *cobra.Command, cfg any) error {
 
 	cl.v.SetConfigType("toml")
 
+	// Enable environment variable support
+	cl.v.SetEnvPrefix("TELDRIVE")
+	cl.v.AutomaticEnv()
+	cl.v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+
 	cfgFile := cmd.Flags().Lookup("config").Value.String()
 	if cfgFile != "" {
 		cl.v.SetConfigFile(cfgFile)

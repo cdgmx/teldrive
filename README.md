@@ -12,7 +12,23 @@ Teldrive is a powerful utility that enables you to organise your telegram files 
 > [!IMPORTANT]
 > Teldrive functions as a wrapper over your Telegram account, simplifying file access. However, users must adhere to the limitations imposed by the Telegram API. Teldrive is not responsible for any consequences arising from non-compliance with these API limits.You will be banned instantly if you misuse telegram API.
 
-Visit https://teldrive-docs.pages.dev for setting up teldrive.
+## Quick Start
+
+### Production Deployment
+```bash
+git clone https://github.com/tgdrive/teldrive.git
+cd teldrive
+docker-compose up -d
+```
+
+### Development Environment
+```bash
+git clone https://github.com/tgdrive/teldrive.git
+cd teldrive
+docker-compose -f docker-compose.dev.yml up
+```
+
+Visit https://teldrive-docs.pages.dev for detailed setup instructions.
 
 # Recognitions
 
