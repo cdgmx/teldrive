@@ -30,8 +30,6 @@ services:
         - teldriveadmin
       interval: 10s
       start_period: 30s
-    networks:
-      - teldrive_network
 
   teldrive:
     build:
@@ -66,8 +64,6 @@ services:
       # - './config.toml:/config.toml:ro'
     expose:
       - 8080
-    networks:
-      - teldrive_network
 
   imgproxy:
     image: darthsim/imgproxy
@@ -79,12 +75,6 @@ services:
       IMGPROXY_MALLOC: jemalloc
     expose:
       - 8080
-    networks:
-      - teldrive_network
 
 volumes:
   pgdata:
-
-networks:
-  teldrive_network:
-    driver: bridge
