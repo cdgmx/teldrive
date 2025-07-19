@@ -59,7 +59,7 @@ services:
       - TELDRIVE_CACHE_REDIS_PASS=${TELDRIVE_CACHE_REDIS_PASS:-}
     volumes:
       # Storage for Telegram session data
-      - './storage.db:/storage.db:rw'
+      - './session.db:/.teldrive/session.db:rw'
       # Optional: mount local config instead of using configs
       # - './config.toml:/config.toml:ro'
     expose:
