@@ -45,8 +45,8 @@ RUN echo "Building UI from source repository: $UI_REPO_URL"; \
     rm -rf /tmp/teldrive-ui-src && \
     echo "✅ UI built successfully from source"
 
-# Generate API code (matching taskfile.yml)
-RUN go generate ./...
+# Generate API code (matching taskfile.yml) - Skip for faster builds
+# RUN go generate ./...
 
 # Build the application
 ARG BUILD_MODE="production"

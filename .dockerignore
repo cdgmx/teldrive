@@ -7,6 +7,7 @@ bin/
 *.dylib
 *.test
 *.out
+teldrive
 
 # Development files
 .git/
@@ -17,23 +18,28 @@ bin/
 logs/
 *.log
 
-# Database files
+# Database files (will be mounted as volumes)
 *.db
+*.db-journal
+*.db-wal
 sessions/
+session.db/
+storage.db/
 
-# UI build artifacts (will be downloaded during build)
+# Node.js and UI build artifacts
+node_modules/
 ui/dist/
 docs/dist/
 teldrive-ui.zip
+dist/
+.cache/
 
-# Documentation and configs
-README.md
-LICENSE
-CONTRIBUTING.md
-.github/
+# Documentation 
 *.md
+docs/
+.github/
 
-# Go workspace
+# Go workspace and vendor
 go.work
 vendor/
 
@@ -52,6 +58,22 @@ Thumbs.db
 certs/
 sslcerts/
 
-# Keep goreleaser.dockerfile for reference but don't include in build context
+# Keep only essential Docker files
 goreleaser.dockerfile
 .goreleaser.yml
+
+# Scripts and tools (keep build.sh)
+scripts/
+!build.sh
+
+# Test files
+*_test.go
+coverage.out
+test-results/
+
+# Temporary files
+.tmp/
+tmp/
+*.tmp
+*.bak
+*.backup

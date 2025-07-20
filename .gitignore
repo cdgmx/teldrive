@@ -33,5 +33,5 @@ bin
 ui/dist
 docs/dist
 teldrive-ui.zip
-internal/api
+# internal/api
 .aider*

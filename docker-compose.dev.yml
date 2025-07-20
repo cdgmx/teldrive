@@ -1,81 +1,53 @@
 version: '3.9'
 
 # Docker Compose for TelDrive Development
-# Optimized for local development with faster builds and port access
+# Extends production config and overrides only what's needed for development
 # Automatically loads environment variables from .env file
 
-configs:
-  teldrive_config:
-    content: |
-      [db]
-      data-source = "postgres://teldriveadmin:${POSTGRES_PASSWORD:-devpassword}@db:5432/teldrive"
-
 services:
+  # Extend database from production with dev overrides
   db:
-    env_file:
-      - .env
-    image: 'groonga/pgroonga:latest-alpine-16'
+    extends:
+      file: docker-compose.yml
+      service: db
     container_name: teldrive_db_dev
     restart: unless-stopped
     environment:
-      POSTGRES_DB: teldrive
-      POSTGRES_USER: teldriveadmin
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
     volumes:
       - 'pgdata_dev:/var/lib/postgresql/data'
     ports:
       - "5432:5432"  # Expose DB port for development tools
-    healthcheck:
-      test:
-        - CMD
-        - pg_isready
-        - '-d'
-        - teldrive
-        - '-U'
-        - teldriveadmin
-      interval: 10s
-      start_period: 30s
 
+  # Extend teldrive app from production with dev overrides
   teldrive:
-    env_file:
-      - .env
+    extends:
+      file: docker-compose.yml
+      service: teldrive
+    container_name: teldrive_app_dev
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        # Development build - faster builds, skip UI for now
         - UI_SOURCE_TYPE=build
         - UI_REPO_URL=https://github.com/cdgmx/teldrive-ui.git
         - UI_REPO_BRANCH=main
         - BUILD_MODE=development
-        # Optional: Use GitHub token for private repos or rate limiting
-        # - GITHUB_TOKEN=${GITHUB_TOKEN}
-    container_name: teldrive_app_dev
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    configs:
-      - source: teldrive_config
-        target: /config.toml
     environment:
-      # Development-friendly environment variables
+      # Development-friendly defaults (inherits others from production)
       - TELDRIVE_JWT_SECRET=${TELDRIVE_JWT_SECRET:-dev-jwt-secret-key-for-local-development-only}
       - TELDRIVE_JWT_ALLOWED_USERS=${TELDRIVE_JWT_ALLOWED_USERS:-YourTelegramUsername}
       - TELDRIVE_TG_UPLOADS_ENCRYPTION_KEY=${TELDRIVE_TG_UPLOADS_ENCRYPTION_KEY:-dev-32-char-encryption-key-local}
       - TELDRIVE_CACHE_REDIS_PASS=${TELDRIVE_CACHE_REDIS_PASS:-}
-    volumes:
-      # Storage for Telegram session data
-      - './session.db:/.teldrive/session.db:rw'
-      # Optional: mount local config for easier development
-      # - './config.toml:/config.toml:ro'
     ports:
       - "8080:8080"  # Main application port
 
+  # Extend imgproxy from production with dev overrides
   imgproxy:
-    env_file:
-      - .env
-    image: darthsim/imgproxy
+    extends:
+      file: docker-compose.yml
+      service: imgproxy
     container_name: teldrive_imgproxy_dev
     restart: unless-stopped
     environment:
@@ -84,6 +56,13 @@ services:
       IMGPROXY_MALLOC: jemalloc
     ports:
       - "8000:8080"  # Image proxy port
+
+# Import configs from production
+configs:
+  teldrive_config:
+    content: |
+      [db]
+      data-source = "postgres://teldriveadmin:${POSTGRES_PASSWORD:-devpassword}@db:5432/teldrive"
 
 volumes:
   pgdata_dev:
