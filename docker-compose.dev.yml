@@ -1,101 +1,89 @@
 version: '3.9'
 
-# Docker Compose for TelDrive Development Environment
-# Optimized for development workflow with live reload and debugging
+# Docker Compose for TelDrive Development
+# Optimized for local development with faster builds and port access
+# Automatically loads environment variables from .env file
+
+configs:
+  teldrive_config:
+    content: |
+      [db]
+      data-source = "postgres://teldriveadmin:${POSTGRES_PASSWORD:-devpassword}@db:5432/teldrive"
 
 services:
   db:
+    env_file:
+      - .env
     image: 'groonga/pgroonga:latest-alpine-16'
-    container_name: teldrive_dev_db
+    container_name: teldrive_db_dev
     restart: unless-stopped
     environment:
-      POSTGRES_DB: teldrive_dev
+      POSTGRES_DB: teldrive
       POSTGRES_USER: teldriveadmin
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
     volumes:
       - 'pgdata_dev:/var/lib/postgresql/data'
     ports:
-      - "5432:5432"  # Expose for external access
+      - "5432:5432"  # Expose DB port for development tools
     healthcheck:
       test:
         - CMD
         - pg_isready
         - '-d'
-        - teldrive_dev
+        - teldrive
         - '-U'
         - teldriveadmin
       interval: 10s
       start_period: 30s
-    networks:
-      - teldrive_dev_network
 
   teldrive:
+    env_file:
+      - .env
     build:
       context: .
       dockerfile: Dockerfile
-      target: builder  # Use builder stage for development with debugging
       args:
-        # For development, build UI from your repo for latest changes
+        # Development build - faster builds, skip UI for now
         - UI_SOURCE_TYPE=build
         - UI_REPO_URL=https://github.com/cdgmx/teldrive-ui.git
         - UI_REPO_BRANCH=main
         - BUILD_MODE=development
-        # Optional: Use skip for faster rebuilds if UI hasn't changed
-        # - UI_SOURCE_TYPE=skip
-    container_name: teldrive_dev_app
+        # Optional: Use GitHub token for private repos or rate limiting
+        # - GITHUB_TOKEN=${GITHUB_TOKEN}
+    container_name: teldrive_app_dev
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+    configs:
+      - source: teldrive_config
+        target: /config.toml
+    environment:
+      # Development-friendly environment variables
+      - TELDRIVE_JWT_SECRET=${TELDRIVE_JWT_SECRET:-dev-jwt-secret-key-for-local-development-only}
+      - TELDRIVE_JWT_ALLOWED_USERS=${TELDRIVE_JWT_ALLOWED_USERS:-YourTelegramUsername}
+      - TELDRIVE_TG_UPLOADS_ENCRYPTION_KEY=${TELDRIVE_TG_UPLOADS_ENCRYPTION_KEY:-dev-32-char-encryption-key-local}
+      - TELDRIVE_CACHE_REDIS_PASS=${TELDRIVE_CACHE_REDIS_PASS:-}
     volumes:
-      # Mount source code for live development
-      - '.:/app:rw'
-      - './storage.dev.db:/storage.db:rw'
-      - './config.dev.toml:/config.toml:ro'
-      # Go module cache for faster rebuilds
-      - 'go_mod_cache:/go/pkg/mod'
-      - 'go_build_cache:/root/.cache/go-build'
+      # Storage for Telegram session data
+      - './session.db:/.teldrive/session.db:rw'
+      # Optional: mount local config for easier development
+      # - './config.toml:/config.toml:ro'
     ports:
-      - "8080:8080"
-      - "2345:2345"  # Delve debugger port
-    networks:
-      - teldrive_dev_network
-    environment:
-      - CGO_ENABLED=0
-      - GOOS=linux
-      - GO111MODULE=on
-    # Override entrypoint for development
-    entrypoint: ["go", "run", "main.go", "run", "--tg-storage-file", "/storage.db"]
-    # Enable debugging
-    command: ["--config", "/config.toml"]
+      - "8080:8080"  # Main application port
 
-  # Optional: Redis for development caching
-  redis:
-    image: redis:7-alpine
-    container_name: teldrive_dev_redis
+  imgproxy:
+    env_file:
+      - .env
+    image: darthsim/imgproxy
+    container_name: teldrive_imgproxy_dev
     restart: unless-stopped
-    ports:
-      - "6379:6379"
-    networks:
-      - teldrive_dev_network
-
-  # Optional: Adminer for database management
-  adminer:
-    image: adminer
-    container_name: teldrive_dev_adminer
-    restart: unless-stopped
-    ports:
-      - "8081:8080"
-    networks:
-      - teldrive_dev_network
     environment:
-      ADMINER_DEFAULT_SERVER: db
+      IMGPROXY_ALLOW_ORIGIN: "*"  # Allow all origins for development
+      IMGPROXY_ENFORCE_WEBP: 'true'
+      IMGPROXY_MALLOC: jemalloc
+    ports:
+      - "8000:8080"  # Image proxy port
 
 volumes:
   pgdata_dev:
-  go_mod_cache:
-  go_build_cache:
-
-networks:
-  teldrive_dev_network:
-    driver: bridge

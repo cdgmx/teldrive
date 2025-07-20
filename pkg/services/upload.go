@@ -158,36 +158,59 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 
 	err = tgc.RunWithAuth(ctx, client, token, func(ctx context.Context) error {
 
+		logger.Debug("starting upload process",
+			zap.Int64("channelId", channelId),
+			zap.String("partName", params.PartName))
+
 		channel, err := tgc.GetChannelById(ctx, client.API(), channelId)
 
 		if err != nil {
-			return err
+			logger.Error("failed to get channel",
+				zap.Int64("channelId", channelId),
+				zap.Error(err))
+			return fmt.Errorf("failed to get channel %d: %w", channelId, err)
 		}
+
+		logger.Debug("channel retrieved successfully",
+			zap.Int64("channelId", channel.ChannelID))
 
 		var salt string
 
 		if params.Encrypted.Value {
+			logger.Debug("encryption enabled, generating salt")
 			salt, _ = generateRandomSalt()
 			cipher, err := crypt.NewCipher(a.cnf.TG.Uploads.EncryptionKey, salt)
 			if err != nil {
-				return err
+				logger.Error("failed to create cipher", zap.Error(err))
+				return fmt.Errorf("failed to create cipher: %w", err)
 			}
 			fileSize = crypt.EncryptedSize(fileSize)
 			fileStream, err = cipher.EncryptData(fileStream)
 			if err != nil {
-				return err
+				logger.Error("failed to encrypt data", zap.Error(err))
+				return fmt.Errorf("failed to encrypt data: %w", err)
 			}
+			logger.Debug("data encrypted successfully", zap.Int64("encryptedSize", fileSize))
 		}
 
 		client := uploadPool.Default(ctx)
+
+		logger.Debug("starting telegram upload",
+			zap.Int64("fileSize", fileSize),
+			zap.Int("threads", a.cnf.TG.Uploads.Threads))
 
 		u := uploader.NewUploader(client).WithThreads(a.cnf.TG.Uploads.Threads).WithPartSize(512 * 1024)
 
 		upload, err := u.Upload(ctx, uploader.NewUpload(params.PartName, fileStream, fileSize))
 
 		if err != nil {
-			return err
+			logger.Error("telegram uploader failed",
+				zap.Error(err),
+				zap.String("errorType", fmt.Sprintf("%T", err)))
+			return fmt.Errorf("telegram upload failed: %w", err)
 		}
+
+		logger.Debug("telegram upload completed successfully")
 
 		document := message.UploadedDocument(upload).Filename(params.PartName).ForceFile(true)
 
@@ -196,27 +219,57 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 		target := sender.To(&tg.InputPeerChannel{ChannelID: channel.ChannelID,
 			AccessHash: channel.AccessHash})
 
+		logger.Debug("sending media to channel",
+			zap.Int64("channelId", channel.ChannelID),
+			zap.String("filename", params.PartName))
+
 		res, err := target.Media(ctx, document)
 
 		if err != nil {
-			return err
+			logger.Error("failed to send media to channel",
+				zap.Error(err),
+				zap.String("errorType", fmt.Sprintf("%T", err)),
+				zap.Int64("channelId", channel.ChannelID))
+			return fmt.Errorf("failed to send media to channel: %w", err)
 		}
 
-		updates := res.(*tg.Updates)
+		logger.Debug("media sent successfully, processing response")
+
+		updates, ok := res.(*tg.Updates)
+		if !ok {
+			logger.Error("unexpected response type from telegram",
+				zap.String("responseType", fmt.Sprintf("%T", res)))
+			return fmt.Errorf("unexpected response type from telegram upload: %T", res)
+		}
+
+		logger.Debug("received updates response",
+			zap.Int("updatesCount", len(updates.Updates)))
 
 		var message *tg.Message
 
-		for _, update := range updates.Updates {
+		for i, update := range updates.Updates {
+			logger.Debug("processing update",
+				zap.Int("updateIndex", i),
+				zap.String("updateType", fmt.Sprintf("%T", update)))
+			
 			channelMsg, ok := update.(*tg.UpdateNewChannelMessage)
 			if ok {
 				message = channelMsg.Message.(*tg.Message)
+				logger.Debug("found channel message",
+					zap.Int("messageId", message.ID))
 				break
 			}
 		}
 
-		if message.ID == 0 {
-			return fmt.Errorf("upload failed")
+		if message == nil || message.ID == 0 {
+			logger.Error("no valid message received from telegram",
+				zap.Bool("messageIsNil", message == nil),
+				zap.Int("messageId", func() int { if message != nil { return message.ID } else { return 0 } }()))
+			return fmt.Errorf("upload failed: no valid message received")
 		}
+
+		logger.Debug("message created successfully",
+			zap.Int("messageId", message.ID))
 
 		partUpload := &models.Upload{
 			Name:      params.PartName,
@@ -230,30 +283,69 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 			Salt:      salt,
 		}
 
+		logger.Debug("saving upload record to database",
+			zap.Int("partId", message.ID),
+			zap.Int64("size", fileSize))
+
 		if err := a.db.Create(partUpload).Error; err != nil {
-			return err
+			logger.Error("database insert failed, cleaning up uploaded message",
+				zap.Error(err),
+				zap.Int("messageId", message.ID))
+			// Clean up the uploaded message if database insert fails
+			client.ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{Channel: channel, ID: []int{message.ID}})
+			return fmt.Errorf("database insert failed: %w", err)
 		}
 
+		logger.Debug("upload record saved successfully, verifying upload")
+
+		// Verify the upload by fetching the message back
 		v, err := client.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{Channel: channel, ID: []tg.InputMessageClass{&tg.InputMessageID{ID: message.ID}}})
 
 		if err != nil || v == nil {
+			logger.Error("failed to verify upload by fetching message",
+				zap.Error(err),
+				zap.Bool("responseIsNil", v == nil),
+				zap.Int("messageId", message.ID))
 			return ErrUploadFailed
 		}
+
+		logger.Debug("verification request completed, checking response")
 
 		switch msgs := v.(type) {
 		case *tg.MessagesChannelMessages:
 			if len(msgs.Messages) == 0 {
+				logger.Error("verification failed: no messages returned",
+					zap.Int("messageId", message.ID))
 				return ErrUploadFailed
 			}
+			
+			logger.Debug("verification successful, checking document",
+				zap.Int("messagesCount", len(msgs.Messages)))
+			
 			doc, ok := msgDocument(msgs.Messages[0])
 			if !ok {
+				logger.Error("verification failed: message does not contain valid document",
+					zap.String("messageType", fmt.Sprintf("%T", msgs.Messages[0])))
 				return ErrUploadFailed
 			}
+			
+			logger.Debug("document found in verification",
+				zap.Int64("documentSize", doc.Size),
+				zap.Int64("expectedSize", fileSize))
+			
 			if doc.Size != fileSize {
+				logger.Error("verification failed: size mismatch, cleaning up",
+					zap.Int64("documentSize", doc.Size),
+					zap.Int64("expectedSize", fileSize),
+					zap.Int("messageId", message.ID))
 				client.ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{Channel: channel, ID: []int{message.ID}})
 				return ErrUploadFailed
 			}
+			
+			logger.Debug("verification passed: sizes match")
 		default:
+			logger.Error("verification failed: unexpected message type",
+				zap.String("messageType", fmt.Sprintf("%T", v)))
 			return ErrUploadFailed
 		}
 
@@ -266,15 +358,44 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 			Encrypted: partUpload.Encrypted,
 		}
 		out.SetSalt(api.NewOptString(partUpload.Salt))
+		
+		logger.Debug("upload process completed successfully",
+			zap.Int("partId", partUpload.PartId),
+			zap.Int64("size", partUpload.Size))
+		
 		return nil
 
 	})
 
 	if err != nil {
-		logger.Error("upload failed", zap.String("fileName", params.FileName),
+		logger.Error("upload failed", 
+			zap.String("fileName", params.FileName),
 			zap.String("partName", params.PartName),
-			zap.Int("chunkNo", params.PartNo))
-		return nil, err
+			zap.Int("chunkNo", params.PartNo),
+			zap.Error(err),
+			zap.String("errorType", fmt.Sprintf("%T", err)),
+			zap.Int64("channelId", channelId),
+			zap.String("bot", channelUser),
+			zap.Int("botIndex", index))
+		
+		// Return detailed error information for frontend handling
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, &apiError{err: errors.New("upload timeout - please retry with smaller chunk size"), code: 408}
+		}
+		
+		if strings.Contains(err.Error(), "FLOOD_WAIT") {
+			return nil, &apiError{err: errors.New("telegram rate limit exceeded - please wait and retry"), code: 429}
+		}
+		
+		if strings.Contains(err.Error(), "FILE_PART_") {
+			return nil, &apiError{err: errors.New("invalid file part - please retry upload"), code: 400}
+		}
+		
+		if strings.Contains(err.Error(), "CHANNEL_PRIVATE") {
+			return nil, &apiError{err: errors.New("channel access denied - check bot permissions"), code: 403}
+		}
+		
+		return nil, &apiError{err: fmt.Errorf("upload failed: %w", err), code: 500}
 	}
 	logger.Debug("upload finished", zap.String("fileName", params.FileName),
 		zap.String("partName", params.PartName),
