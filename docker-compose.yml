@@ -64,6 +64,8 @@ services:
       # - './config.toml:/config.toml:ro'
     expose:
       - 8080
+    ports:
+      - "8999:8080"  # Main application port
 
   imgproxy:
     image: darthsim/imgproxy
